@@ -30,6 +30,24 @@ import {
   executeDocumentAnalysis,
   queryDocument,
 } from './documentService.js';
+import {
+  validateCodePayload,
+  generateCode,
+  explainCode,
+  debugCode,
+  optimizeCode,
+  chatWithCode,
+  executeSandboxedCode,
+} from './codeService.js';
+import {
+  listProjects,
+  getProject,
+  saveProject,
+  deleteProject,
+  saveProjectFile,
+  renameProjectFile,
+  deleteProjectFile,
+} from './projectStore.js';
 
 dotenv.config();
 
@@ -599,6 +617,219 @@ app.delete('/api/documents/:id', async (req, res) => {
     return res.json({ success: true, deleted, id: req.params.id });
   } catch (err) {
     console.error('[Delete Document Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Phase 6: Advanced AI Code Studio Endpoints
+// -------------------------------------------------------------
+
+// AI Code Generation
+app.post('/api/code/generate', async (req, res) => {
+  try {
+    const validation = validateCodePayload(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    const { prompt, language, type, context } = req.body;
+    const result = await generateCode({ prompt, language, type, context });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Generate Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Code Explanation
+app.post('/api/code/explain', async (req, res) => {
+  try {
+    const validation = validateCodePayload(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    const { code, language, mode, selection } = req.body;
+    const result = await explainCode({ code, language, mode, selection });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Explain Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Debugging
+app.post('/api/code/debug', async (req, res) => {
+  try {
+    const validation = validateCodePayload(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    const { code, language, errorMessage, stackTrace, expectedBehavior, actualBehavior } = req.body;
+    const result = await debugCode({ code, language, errorMessage, stackTrace, expectedBehavior, actualBehavior });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Debug Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Code Optimization
+app.post('/api/code/optimize', async (req, res) => {
+  try {
+    const validation = validateCodePayload(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    const { code, language, focusArea } = req.body;
+    const result = await optimizeCode({ code, language, focusArea });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Optimize Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Coding Chat
+app.post('/api/code/chat', async (req, res) => {
+  try {
+    const { message, history, activeFile, code, selection, language, openFiles } = req.body || {};
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ success: false, error: 'Message cannot be empty.' });
+    }
+    const result = await chatWithCode({ message, history, activeFile, code, selection, language, openFiles });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Chat Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Security-First Sandboxed Code Execution
+app.post('/api/code/execute', async (req, res) => {
+  try {
+    const validation = validateCodePayload(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    const { code, language, timeoutMs } = req.body;
+    const result = await executeSandboxedCode({ code, language, timeoutMs });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Code Execution Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Coding Project & File Workspace Endpoints
+// -------------------------------------------------------------
+
+// List user projects
+app.get('/api/projects', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const projects = await listProjects(userId);
+    return res.json({ success: true, projects, count: projects.length });
+  } catch (err) {
+    console.error('[List Projects Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get single project
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const project = await getProject(userId, req.params.id);
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found or access denied.' });
+    }
+    return res.json({ success: true, project });
+  } catch (err) {
+    console.error('[Get Project Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Create or save project
+app.post('/api/projects', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const saved = await saveProject(userId, req.body || {});
+    return res.status(201).json({ success: true, project: saved });
+  } catch (err) {
+    console.error('[Save Project Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update project
+app.put('/api/projects/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const saved = await saveProject(userId, { ...(req.body || {}), id: req.params.id });
+    return res.json({ success: true, project: saved });
+  } catch (err) {
+    console.error('[Update Project Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete project
+app.delete('/api/projects/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const deleted = await deleteProject(userId, req.params.id);
+    return res.json({ success: true, deleted, id: req.params.id });
+  } catch (err) {
+    console.error('[Delete Project Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Save or create file inside project
+app.post('/api/projects/:id/files', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const updated = await saveProjectFile(userId, req.params.id, req.body || {});
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Project not found or access denied.' });
+    }
+    return res.json({ success: true, project: updated });
+  } catch (err) {
+    console.error('[Save Project File Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Rename file inside project
+app.put('/api/projects/:id/files/rename', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { oldPath, newPath } = req.body || {};
+    const updated = await renameProjectFile(userId, req.params.id, oldPath, newPath);
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Project not found or access denied.' });
+    }
+    return res.json({ success: true, project: updated });
+  } catch (err) {
+    console.error('[Rename Project File Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete file inside project
+app.delete('/api/projects/:id/files', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { filePath } = req.body || {};
+    const updated = await deleteProjectFile(userId, req.params.id, filePath);
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Project not found or access denied.' });
+    }
+    return res.json({ success: true, project: updated });
+  } catch (err) {
+    console.error('[Delete Project File Error]:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
