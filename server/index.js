@@ -229,8 +229,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`[NOVA AI Engine] Express backend running on http://localhost:${PORT}`);
-  console.log(`[NOVA AI Engine] Search provider: ${process.env.SEARCH_PROVIDER || 'duckduckgo'}`);
-  console.log(`[NOVA AI Engine] AI provider: ${process.env.AI_PROVIDER || 'auto'}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`[NOVA AI Engine] Express backend running on http://localhost:${PORT}`);
+    console.log(`[NOVA AI Engine] Search provider: ${process.env.SEARCH_PROVIDER || 'duckduckgo'}`);
+    console.log(`[NOVA AI Engine] AI provider: ${process.env.AI_PROVIDER || 'auto'}`);
+  });
+}
+
+export default app;
