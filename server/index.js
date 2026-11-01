@@ -16,6 +16,20 @@ import {
   clearAllConversations,
 } from './conversationStore.js';
 import { streamChatCompletion, generateChatCompletion } from './chatService.js';
+import {
+  listDocuments,
+  getDocument,
+  saveDocument,
+  deleteDocument,
+  clearAllDocuments,
+} from './documentStore.js';
+import {
+  parseDocumentBuffer,
+  createDocumentChunks,
+  generateInitialDocIntelligence,
+  executeDocumentAnalysis,
+  queryDocument,
+} from './documentService.js';
 
 dotenv.config();
 
@@ -65,7 +79,8 @@ setInterval(() => {
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api', rateLimiter);
 
 // Health check endpoint
@@ -408,6 +423,182 @@ app.post('/api/chat', async (req, res) => {
     });
   } catch (err) {
     console.error('[Chat Completion Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Document Intelligence & Multi-Modal Ingestion Endpoints
+// -------------------------------------------------------------
+
+// Upload and ingest document (PDF, DOCX, TXT)
+app.post('/api/documents/upload', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { filename, extension, contentBase64, size } = req.body || {};
+
+    if (!filename || (!contentBase64 && contentBase64 !== '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Filename and document content are required.',
+      });
+    }
+
+    const ext = (extension || filename.split('.').pop() || '').toLowerCase();
+    if (!['pdf', 'docx', 'txt'].includes(ext)) {
+      return res.status(400).json({
+        success: false,
+        error: `Unsupported file format '.${ext}'. Only PDF, DOCX, and TXT files are supported.`,
+      });
+    }
+
+    // Decode buffer
+    let buffer;
+    if (typeof contentBase64 === 'string' && contentBase64.includes('base64,')) {
+      buffer = Buffer.from(contentBase64.split('base64,')[1], 'base64');
+    } else if (typeof contentBase64 === 'string') {
+      buffer = Buffer.from(contentBase64, 'base64');
+    } else {
+      buffer = Buffer.from('');
+    }
+
+    // Size boundary validation (25MB limit)
+    const MAX_DOC_SIZE_BYTES = 25 * 1024 * 1024;
+    if (buffer.length > MAX_DOC_SIZE_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: `File size exceeds the 25MB limit. Please upload a smaller document.`,
+      });
+    }
+
+    // Parse document text and extract pages
+    const parsed = parseDocumentBuffer(buffer, filename, ext);
+    if (!parsed.text || parsed.text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: `The document appears to be empty or contains non-readable scanned images without OCR text.`,
+      });
+    }
+
+    // Create semantic chunks
+    const chunks = createDocumentChunks(parsed.text, parsed.pages);
+
+    // Compute metrics and initial intelligence
+    const intel = generateInitialDocIntelligence(parsed.text, parsed.pages, filename);
+
+    // Human-readable size format
+    const sizeDisplay = size || `${Math.max(1, Math.round(buffer.length / 1024))} KB`;
+
+    // Persist document record
+    const savedDoc = await saveDocument(userId, {
+      name: filename,
+      extension: ext,
+      size: sizeDisplay,
+      pages: parsed.pages,
+      extractedText: parsed.text,
+      chunks,
+      summary: intel.summary,
+      metrics: intel.metrics,
+      keyInsights: intel.keyInsights,
+    });
+
+    return res.status(200).json({
+      success: true,
+      document: {
+        id: savedDoc.id,
+        name: savedDoc.name,
+        size: savedDoc.size,
+        extension: savedDoc.extension,
+        pages: savedDoc.pages,
+        summary: savedDoc.summary,
+        metrics: savedDoc.metrics,
+        keyInsights: savedDoc.keyInsights,
+        chunkCount: savedDoc.chunks.length,
+      },
+    });
+  } catch (err) {
+    console.error('[Document Upload Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// List all documents for user
+app.get('/api/documents', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const documents = await listDocuments(userId);
+    return res.json({ success: true, documents });
+  } catch (err) {
+    console.error('[List Documents Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get single document by ID
+app.get('/api/documents/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const doc = await getDocument(userId, req.params.id);
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Document not found or access denied.' });
+    }
+    return res.json({ success: true, document: doc });
+  } catch (err) {
+    console.error('[Get Document Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Perform one of 9 AI Document Analysis operations
+app.post('/api/documents/:id/analyze', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { task = 'summarize' } = req.body || {};
+
+    const doc = await getDocument(userId, req.params.id);
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Document not found or access denied.' });
+    }
+
+    const analysis = await executeDocumentAnalysis(task, doc);
+    return res.json({ success: true, ...analysis });
+  } catch (err) {
+    console.error('[Document Analysis Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Document Q&A / Chat endpoint
+app.post('/api/documents/:id/query', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { query, history = [] } = req.body || {};
+
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ success: false, error: 'Query is required.' });
+    }
+
+    const doc = await getDocument(userId, req.params.id);
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Document not found or access denied.' });
+    }
+
+    const queryResult = await queryDocument(query, doc, history);
+    return res.json({ success: true, ...queryResult });
+  } catch (err) {
+    console.error('[Document Query Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete document
+app.delete('/api/documents/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const deleted = await deleteDocument(userId, req.params.id);
+    return res.json({ success: true, deleted, id: req.params.id });
+  } catch (err) {
+    console.error('[Delete Document Error]:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
