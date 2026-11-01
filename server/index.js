@@ -48,6 +48,21 @@ import {
   renameProjectFile,
   deleteProjectFile,
 } from './projectStore.js';
+import {
+  generateCreativeImage,
+  editCreativeImage,
+  enhanceCreativePrompt,
+  validateImagePayload,
+  CREATIVE_STYLES,
+  ASPECT_RATIOS,
+  CREATIVE_TEMPLATES,
+} from './creativeService.js';
+import {
+  listCreativeImages,
+  getCreativeImage,
+  saveCreativeImage,
+  deleteCreativeImage,
+} from './creativeStore.js';
 
 dotenv.config();
 
@@ -830,6 +845,133 @@ app.delete('/api/projects/:id/files', async (req, res) => {
     return res.json({ success: true, project: updated });
   } catch (err) {
     console.error('[Delete Project File Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Phase 7: Advanced AI Creative Studio Endpoints
+// -------------------------------------------------------------
+
+// Creative Metadata (Styles, Aspect Ratios, Templates)
+app.get('/api/creative/meta', (req, res) => {
+  res.json({
+    success: true,
+    styles: CREATIVE_STYLES,
+    aspectRatios: ASPECT_RATIOS,
+    templates: CREATIVE_TEMPLATES,
+  });
+});
+
+// AI Prompt Enhancement Assistant
+app.post('/api/creative/enhance-prompt', async (req, res) => {
+  try {
+    const { prompt, style, aspectRatio } = req.body || {};
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ success: false, error: 'Prompt cannot be empty.' });
+    }
+    const result = await enhanceCreativePrompt(prompt, { style, aspectRatio });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Creative Enhance Prompt Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Text-to-Image Generation
+app.post('/api/creative/generate', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { prompt, style, aspectRatio, negativePrompt, templateId, save = true } = req.body || {};
+
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ success: false, error: 'Prompt is required for image generation.' });
+    }
+
+    const generated = await generateCreativeImage({
+      prompt,
+      style,
+      aspectRatio,
+      negativePrompt,
+      templateId,
+    });
+
+    let savedRecord = generated;
+    if (save) {
+      savedRecord = await saveCreativeImage(userId, generated);
+    }
+
+    return res.status(201).json({ success: true, image: savedRecord });
+  } catch (err) {
+    console.error('[Creative Generate Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Image Editing
+app.post('/api/creative/edit', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { sourceImage, editInstruction, targetStyle, save = true } = req.body || {};
+
+    const validation = validateImagePayload({ image: sourceImage, editInstruction });
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const edited = await editCreativeImage({
+      sourceImage,
+      editInstruction,
+      targetStyle,
+    });
+
+    let savedRecord = edited;
+    if (save) {
+      savedRecord = await saveCreativeImage(userId, edited);
+    }
+
+    return res.status(201).json({ success: true, image: savedRecord });
+  } catch (err) {
+    console.error('[Creative Edit Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// List User Creative Gallery
+app.get('/api/creative/gallery', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const images = await listCreativeImages(userId);
+    return res.json({ success: true, images, count: images.length });
+  } catch (err) {
+    console.error('[Creative Gallery Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get Specific Image
+app.get('/api/creative/gallery/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const image = await getCreativeImage(userId, req.params.id);
+    if (!image) {
+      return res.status(404).json({ success: false, error: 'Image not found or access denied.' });
+    }
+    return res.json({ success: true, image });
+  } catch (err) {
+    console.error('[Creative Get Image Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete Image with Confirmation
+app.delete('/api/creative/gallery/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const deleted = await deleteCreativeImage(userId, req.params.id);
+    return res.json({ success: true, deleted, id: req.params.id });
+  } catch (err) {
+    console.error('[Creative Delete Error]:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
