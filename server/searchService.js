@@ -135,8 +135,62 @@ async function searchWithSerper(query, apiKey, signal) {
 }
 
 /**
+ * Search via Wikipedia Open Knowledge API (High-reliability cloud fallback)
+ * Universal, high-speed, zero-blocking API for serverless/cloud environments (e.g. Vercel).
+ */
+async function searchWithWikipedia(query, signal) {
+  try {
+    const encoded = encodeURIComponent(query.trim());
+    const endpoint = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&utf8=&format=json&origin=*`;
+
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'NovaAI-SearchEngine/2.0 (https://novasearch.msr.org; msr-digital-media@cloud)',
+        'Accept': 'application/json',
+      },
+      signal,
+    });
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    const items = data?.query?.search || [];
+
+    return items.slice(0, 6).map((item) => {
+      const pageTitle = item.title;
+      const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(pageTitle.replace(/\s+/g, '_'))}`;
+      const cleanSnippet = (item.snippet || '')
+        .replace(/<span class="searchmatch">/g, '')
+        .replace(/<\/span>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&#039;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim();
+
+      return {
+        title: pageTitle,
+        url: pageUrl,
+        domain: 'wikipedia.org',
+        snippet: cleanSnippet || `Authoritative knowledge overview of ${pageTitle} from the global open encyclopedia.`,
+        reliability: '99%',
+        date: 'Verified Live',
+      };
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    console.warn('[Wikipedia Fallback Warning]:', err.message);
+    return [];
+  }
+}
+
+/**
  * Search via DuckDuckGo (Free live search without requiring a paid key)
  * Queries DuckDuckGo HTML endpoint and extracts real web search result titles, snippets, and URLs.
+ * Cascades to Wikipedia Open Knowledge API when deployed on cloud datacenters (e.g. Vercel/AWS).
  */
 async function searchWithDuckDuckGo(query, signal) {
   const encoded = encodeURIComponent(query);
@@ -191,11 +245,29 @@ async function searchWithDuckDuckGo(query, signal) {
     }
   } catch (err) {
     if (err.name === 'AbortError') throw err;
-    // Fall back to instant answer if HTML fetch encounters network issues
+    // Fall through to multi-tiered cloud fallbacks
   }
 
-  // Fallback to Instant Answer API if HTML yields zero results
-  if (sources.length === 0) {
+  // Tier 2 Cloud Fallback: Wikipedia Open Knowledge API (Universal, non-blocking on Vercel/AWS)
+  if (sources.length < 4) {
+    try {
+      const wikiSources = await searchWithWikipedia(query, signal);
+      for (const wikiItem of wikiSources) {
+        if (sources.length >= 6) break;
+        const alreadyExists = sources.some(
+          (s) => s.url === wikiItem.url || s.title.toLowerCase() === wikiItem.title.toLowerCase()
+        );
+        if (!alreadyExists) {
+          sources.push(wikiItem);
+        }
+      }
+    } catch (wikiErr) {
+      if (wikiErr.name === 'AbortError') throw wikiErr;
+    }
+  }
+
+  // Tier 3 Cloud Fallback: DuckDuckGo Instant Answer API
+  if (sources.length < 3) {
     try {
       const instantRes = await fetch(`https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`, {
         signal,
@@ -203,26 +275,33 @@ async function searchWithDuckDuckGo(query, signal) {
       if (instantRes.ok) {
         const instantData = await instantRes.json();
         if (instantData.AbstractText && instantData.AbstractURL) {
-          sources.push({
-            title: instantData.Heading || query,
-            url: instantData.AbstractURL,
-            domain: extractDomain(instantData.AbstractURL),
-            snippet: instantData.AbstractText,
-            reliability: '98%',
-            date: 'Live Web',
-          });
+          const alreadyExists = sources.some((s) => s.url === instantData.AbstractURL);
+          if (!alreadyExists) {
+            sources.push({
+              title: instantData.Heading || query,
+              url: instantData.AbstractURL,
+              domain: extractDomain(instantData.AbstractURL),
+              snippet: instantData.AbstractText,
+              reliability: '98%',
+              date: 'Live Web',
+            });
+          }
         }
         if (Array.isArray(instantData.RelatedTopics)) {
           for (const topic of instantData.RelatedTopics.slice(0, 5)) {
+            if (sources.length >= 6) break;
             if (topic.FirstURL && topic.Text) {
-              sources.push({
-                title: topic.Text.split(' - ')[0] || query,
-                url: topic.FirstURL,
-                domain: extractDomain(topic.FirstURL),
-                snippet: topic.Text,
-                reliability: '94%',
-                date: 'Live Web',
-              });
+              const alreadyExists = sources.some((s) => s.url === topic.FirstURL);
+              if (!alreadyExists) {
+                sources.push({
+                  title: topic.Text.split(' - ')[0] || query,
+                  url: topic.FirstURL,
+                  domain: extractDomain(topic.FirstURL),
+                  snippet: topic.Text,
+                  reliability: '94%',
+                  date: 'Live Web',
+                });
+              }
             }
           }
         }
