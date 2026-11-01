@@ -128,18 +128,17 @@ export function buildContextualSearchQuery(query, history = []) {
   if (!lastUserTurn) return query;
 
   const lower = query.toLowerCase();
-  const isFollowUp =
-    lower.length < 35 &&
-    (/\b(it|its|they|them|their|this|that|these|those|why|how|what about|more|explain|tell me)\b/i.test(lower) ||
-     lower.startsWith('why') ||
-     lower.startsWith('how') ||
-     lower.startsWith('can you') ||
-     lower.startsWith('what about'));
+  const hasPronounOrFollowUp =
+    /\b(it|its|they|them|their|this|that|these|those|more|explain|tell me|compare|difference|advantages|disadvantages|limitations)\b/i.test(lower) ||
+    lower.startsWith('why') ||
+    lower.startsWith('how') ||
+    lower.startsWith('can you') ||
+    lower.startsWith('what about');
 
-  if (isFollowUp) {
+  if (lower.length < 120 && hasPronounOrFollowUp) {
     // Extract key anchor subject from last query (strip common punctuation)
     const cleanLast = lastUserTurn.content.replace(/[^\w\s]/g, '').trim();
-    const lastWords = cleanLast.split(/\s+/).slice(-4).join(' ');
+    const lastWords = cleanLast.split(/\s+/).slice(-5).join(' ');
     return `${lastWords} ${query}`.trim();
   }
 
